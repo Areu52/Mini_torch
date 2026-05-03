@@ -28,21 +28,21 @@ class ScalarHistory:
     """
     `ScalarHistory` stores the history of `Function` operations that was
     used to construct the current Variable.
-
+    `ScalarHistory` хранит историю операций `Function`,
+    которые были использованы для построения текущей переменной.
     Attributes:
         last_fn : The last Function that was called.
         ctx : The context for that Function.
         inputs : The inputs that were given when `last_fn.forward` was called.
-
+    Атрибуты:
+    last_fn : Последняя функция, которая была вызвана.
+    ctx : Контекст для этой функции.
+    inputs : Входы, которые были переданы при вызове `last_fn.forward`.
     """
 
     last_fn: Optional[Type[ScalarFunction]] = None
     ctx: Optional[Context] = None
     inputs: Sequence[Scalar] = ()
-
-
-# ## Task 1.2 and 1.4
-# Scalar Forward and Backward
 
 _var_count = 0
 
@@ -54,7 +54,14 @@ class Scalar:
     Python numbers while also tracking the operations that led to the
     number's creation. They can only be manipulated by
     `ScalarFunction`.
+
+    Переосмысление (повторная реализация) скалярных значений для
+    отслеживания автоматического дифференцирования. Скалярные переменные
+    ведут себя максимально похоже на обычные числа Python, одновременно
+    отслеживая операции, которые привели к созданию этого числа.
+    Они могут быть изменены только с помощью `ScalarFunction`.
     """
+
 
     history: Optional[ScalarHistory]
     derivative: Optional[float]
@@ -92,31 +99,29 @@ class Scalar:
         return Mul.apply(b, Inv.apply(self))
 
     def __add__(self, b: ScalarLike) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
-
-    def __bool__(self) -> bool:
-        return bool(self.data)
+        # Сложение: вызывает функцию Add и строит узел графа
+        return Add.apply(self, b)
 
     def __lt__(self, b: ScalarLike) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # Операция "меньше": возвращает Scalar(0.0 или 1.0)
+        return LT.apply(self, b)
 
     def __gt__(self, b: ScalarLike) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # Операция "больше": реализована через LT (b < self)
+        return LT.apply(b, self)
 
-    def __eq__(self, b: ScalarLike) -> Scalar:  # type: ignore[override]
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+    def __eq__(self, b: ScalarLike) -> Scalar:
+        # Проверка равенства: возвращает Scalar(0.0 или 1.0)
+        return EQ.apply(self, b)
 
     def __sub__(self, b: ScalarLike) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # x - y = x + (-y)
+        return Add.apply(self, Neg.apply(b))
 
     def __neg__(self) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # -x
+        return Neg.apply(self)
+
 
     def __radd__(self, b: ScalarLike) -> Scalar:
         return self + b
@@ -125,20 +130,20 @@ class Scalar:
         return self * b
 
     def log(self) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # Логарифм: log(x)
+        return Log.apply(self)
 
     def exp(self) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # Экспонента: e^x
+        return Exp.apply(self)
 
     def sigmoid(self) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # Сигмоида: 1 / (1 + exp(-x))
+        return Sigmoid.apply(self)
 
     def relu(self) -> Scalar:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        # ReLU: max(0, x)
+        return ReLU.apply(self)
 
     # Variable elements for backprop
 
@@ -149,7 +154,15 @@ class Scalar:
 
         Args:
             x: value to be accumulated
+
+        Добавляет `val` к производной, накопленной на этой переменной.
+        Должно вызываться только во время автоматического дифференцирования
+        на листовых переменных.
+
+        Аргументы:
+            x: значение, которое нужно добавить
         """
+
         assert self.is_leaf(), "Only leaf variables can have derivatives."
         if self.derivative is None:
             self.derivative = 0.0
@@ -168,13 +181,25 @@ class Scalar:
         return self.history.inputs
 
     def chain_rule(self, d_output: Any) -> Iterable[Tuple[Variable, Any]]:
+        """
+        узнать, какая операция его создала
+        вызвать backward этой операции
+        получить градиенты по каждому входу
+        вернуть пары:
+        """
         h = self.history
         assert h is not None
         assert h.last_fn is not None
         assert h.ctx is not None
 
-        # TODO: Implement for Task 1.3.
-        raise NotImplementedError('Need to implement for Task 1.3')
+        # Вызываем backward-функцию операции, которая создала этот Scalar.
+        # Она возвращает градиенты по каждому входу.
+        grads = h.last_fn._backward(h.ctx, d_output)
+
+        # Возвращаем пары (родитель, его градиент).
+        # Это нужно для backpropagate(), чтобы оно знало,
+        # куда передавать градиенты дальше.
+        return [(inp, grad) for inp, grad in zip(h.inputs, grads)]
 
     def backward(self, d_output: Optional[float] = None) -> None:
         """

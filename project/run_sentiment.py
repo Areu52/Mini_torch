@@ -1,5 +1,5 @@
 import random
-
+import csv
 import embeddings
 
 import minitorch
@@ -270,6 +270,24 @@ def encode_sentiment_data(dataset, pretrained_embeddings, N_train, N_val=0):
 
     return (X_train, y_train), (X_val, y_val)
 
+# Моя функция, я скачал нужный архив руками(интернет не скачивает командой)
+def load_local_sst2(path="project/SST-2"):
+    def read_split(filename):
+        sentences = []
+        labels = []
+
+        with open(f"{path}/{filename}", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            for row in reader:
+                sentences.append(row["sentence"])
+                labels.append(int(row["label"]))
+
+        return {"sentence": sentences, "label": labels}
+
+    return {
+        "train": read_split("train.tsv"),
+        "validation": read_split("dev.tsv"),
+    }
 
 if __name__ == "__main__":
     train_size = 450
@@ -278,7 +296,7 @@ if __name__ == "__main__":
     max_epochs = 250
 
     (X_train, y_train), (X_val, y_val) = encode_sentiment_data(
-        load_dataset("glue", "sst2"),
+        load_local_sst2(),
         embeddings.GloveEmbedding("wikipedia_gigaword", d_emb=50, show_progress=True),
         train_size,
         validation_size,

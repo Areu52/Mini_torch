@@ -1,5 +1,5 @@
 import random
-
+import time
 import numba
 
 import minitorch
@@ -72,6 +72,7 @@ class FastTrain:
         losses = []
 
         for epoch in range(max_epochs):
+            start_time = time.time()
             total_loss = 0.0
             c = list(zip(data.X, data.y))
             random.shuffle(c)
@@ -101,6 +102,8 @@ class FastTrain:
                 out = self.model.forward(X).view(y.shape[0])
                 y2 = minitorch.tensor(data.y)
                 correct = int(((out.detach() > 0.5) == y2).sum()[0])
+                epoch_time = time.time() - start_time
+                print("Time per epoch:", epoch_time)
                 log_fn(epoch, total_loss, correct, losses)
 
 
@@ -122,7 +125,7 @@ if __name__ == "__main__":
     if args.DATASET == "xor":
         data = minitorch.datasets["Xor"](PTS)
     elif args.DATASET == "simple":
-        data = minitorch.datasets["Simple"].simple(PTS)
+        data = minitorch.datasets["Simple"](PTS)
     elif args.DATASET == "split":
         data = minitorch.datasets["Split"](PTS)
 

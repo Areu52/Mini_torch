@@ -31,8 +31,18 @@ def test_avg(t: Tensor) -> None:
 @pytest.mark.task4_4
 @given(tensors(shape=(2, 3, 4)))
 def test_max(t: Tensor) -> None:
-    # TODO: Implement for Task 4.4.
-    raise NotImplementedError('Need to implement for Task 4.4')
+    # Применяем max по последней размерности.
+    out = minitorch.max(t, 2)
+
+    # Проверяем каждый элемент результата вручную.
+    for b in range(2):
+        for c in range(3):
+            # Ожидаемый максимум среди 4 элементов.
+            expected = max([t[b, c, i] for i in range(4)])
+
+            # После max по dim=2 форма будет (2, 3, 1),
+            # поэтому последний индекс равен 0.
+            assert_close(out[b, c, 0], expected)
 
 
 @pytest.mark.task4_4

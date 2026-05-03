@@ -1,3 +1,118 @@
+"""
+===========================================================
+   ОБЪЯСНЕНИЕ НИЗКОУРОВНЕВЫХ ОПЕРАЦИЙ ДЛЯ TENSOR_OPS.PY
+===========================================================
+
+В этом файле мы реализуем три фундаментальные операции:
+    1. tensor_map
+    2. tensor_zip
+    3. tensor_reduce
+
+Эти функции — основа всего тензорного движка MiniTorch.
+На них строятся:
+    - сложение, умножение, сравнения
+    - сигмоида, ReLU, логарифм, экспонента
+    - суммирование по оси
+    - все операции autograd
+    - визуализация графа в Streamlit
+
+Они работают на СЫРОМ storage (обычный Python‑список или numpy‑массив),
+и используют shape, strides и индексацию.
+
+-----------------------------------------------------------
+1. tensor_map(fn)
+-----------------------------------------------------------
+Назначение:
+    Применить функцию fn(x) к КАЖДОМУ элементу входного тензора.
+
+Пример:
+    fn = neg
+    in = [1, 2, 3]
+    out = [-1, -2, -3]
+
+Но MiniTorch должен поддерживать:
+    - broadcasting
+    - произвольные strides
+    - view‑тензоры
+    - транспонированные тензоры
+
+Поэтому алгоритм такой:
+    Для каждого элемента out:
+        1. ordinal → многомерный индекс out
+        2. broadcast_index → индекс входного тензора
+        3. index_to_position → позиция в памяти
+        4. out[pos] = fn(in[pos])
+
+-----------------------------------------------------------
+2. tensor_zip(fn)
+-----------------------------------------------------------
+Назначение:
+    Применить функцию fn(a, b) к двум тензорам.
+
+Пример:
+    fn = add
+    a = [1, 2, 3]
+    b = [10, 20, 30]
+    out = [11, 22, 33]
+
+Но опять же:
+    - формы могут быть разными
+    - broadcasting обязателен
+    - strides могут быть любыми
+
+Алгоритм:
+    Для каждого элемента out:
+        1. ordinal → индекс out
+        2. broadcast_index → индекс в a
+        3. broadcast_index → индекс в b
+        4. вычислить позиции в памяти
+        5. out[pos] = fn(a[pos], b[pos])
+
+-----------------------------------------------------------
+3. tensor_reduce(fn)
+-----------------------------------------------------------
+Назначение:
+    Выполнить свёртку по одной оси (reduce_dim).
+
+Пример:
+    a = [[1, 2, 3],
+         [4, 5, 6]]
+
+    reduce_dim = 1
+    fn = add
+
+    out = [[6],
+           [15]]
+
+Алгоритм:
+    Для каждого элемента out:
+        1. ordinal → индекс out
+        2. копируем индекс в индекс входного тензора
+        3. перебираем ВСЕ значения вдоль reduce_dim
+        4. применяем fn(acc, value)
+        5. записываем результат в out
+
+Важно:
+    out уже заполнен начальными значениями (start),
+    поэтому reduce работает как fold/accumulate.
+
+-----------------------------------------------------------
+ИТОГ:
+-----------------------------------------------------------
+Эти три функции дают MiniTorch возможность выполнять
+все тензорные операции, как в PyTorch, но на чистом Python.
+
+Дальше поверх них строятся:
+    - TensorOps.map / zip / reduce
+    - TensorFunctions (Add, Mul, Sigmoid, ReLU, Sum, ...)
+    - Tensor методы (__add__, sum, mean, relu, ...)
+    - autograd
+    - визуализация графа
+
+===========================================================
+"""
+
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Optional, Type
@@ -229,7 +344,6 @@ class SimpleOps(TensorOps):
 
 # Implementations.
 
-
 def tensor_map(
     fn: Callable[[float], float]
 ) -> Callable[[Storage, Shape, Strides, Storage, Shape, Strides], None]:
@@ -255,7 +369,7 @@ def tensor_map(
     Returns:
         Tensor map function.
     """
-
+    # есть тензор a и надо получить новый тензор out, где каждый элемент — это результат применения функции fn к соответствующему элементу a.
     def _map(
         out: Storage,
         out_shape: Shape,
@@ -264,10 +378,28 @@ def tensor_map(
         in_shape: Shape,
         in_strides: Strides,
     ) -> None:
-        # TODO: Implement for Task 2.3.
-        raise NotImplementedError('Need to implement for Task 2.3')
+        
+        # Количество элементов в выходном тензоре
+        size = int(np.prod(out_shape))
+        
+        # Временные массивы индексов
+        out_index = np.zeros_like(out_shape)
+        in_index = np.zeros_like(in_shape)
 
+        for ordinal in range(size):
+            to_index(ordinal, out_shape, out_index)
+
+            # Применяем правила broadcast из предыдущего файла:
+            broadcast_index(out_index, out_shape, in_shape, in_index)
+
+            # Вычисляем позиции в storage
+            pos_out = index_to_position(out_index, out_strides)
+            pos_in = index_to_position(in_index, in_strides)
+
+            # Применяем функцию fn к каждому элементу входного тензора
+            out[pos_out] = fn(float(in_storage[pos_in]))
     return _map
+
 
 
 def tensor_zip(
@@ -297,7 +429,7 @@ def tensor_zip(
     Returns:
         Tensor zip function.
     """
-
+    # out[i] = fn(a[i], b[i])
     def _zip(
         out: Storage,
         out_shape: Shape,
@@ -309,10 +441,33 @@ def tensor_zip(
         b_shape: Shape,
         b_strides: Strides,
     ) -> None:
-        # TODO: Implement for Task 2.3.
-        raise NotImplementedError('Need to implement for Task 2.3')
+   
+        size = int(np.prod(out_shape))
+
+        out_index = np.zeros_like(out_shape)
+        a_index = np.zeros_like(a_shape)
+        b_index = np.zeros_like(b_shape)
+
+        for ordinal in range(size):
+            # Индекс в out
+            to_index(ordinal, out_shape, out_index)
+
+            # Индекс в a с учётом broadcast
+            broadcast_index(out_index, out_shape, a_shape, a_index)
+
+            # Индекс в b с учётом broadcast
+            broadcast_index(out_index, out_shape, b_shape, b_index)
+
+            # 4. Позиции в массиве, на котором все реализовано
+            pos_out = index_to_position(out_index, out_strides)
+            pos_a = index_to_position(a_index, a_strides)
+            pos_b = index_to_position(b_index, b_strides)
+
+            # Применяем функцию как от нас хотели
+            out[pos_out] = fn(float(a_storage[pos_a]), float(b_storage[pos_b]))
 
     return _zip
+
 
 
 def tensor_reduce(
@@ -331,6 +486,13 @@ def tensor_reduce(
         Tensor reduce function.
     """
 
+    """
+    reduce_dim = 1
+    a = [[1, 2, 3],
+     [4, 5, 6]]
+
+    sum по dim=1 → [[6],[15]]
+    """
     def _reduce(
         out: Storage,
         out_shape: Shape,
@@ -340,8 +502,25 @@ def tensor_reduce(
         a_strides: Strides,
         reduce_dim: int,
     ) -> None:
-        # TODO: Implement for Task 2.3.
-        raise NotImplementedError('Need to implement for Task 2.3')
+        size = int(np.prod(out_shape))
+        out_index = np.zeros_like(out_shape)
+        a_index = np.zeros_like(a_shape)
+
+        for ordinal in range(size):
+            # Индекс в out
+            to_index(ordinal, out_shape, out_index)
+            pos_out = index_to_position(out_index, out_strides)
+            acc = float(out[pos_out])
+
+            # Копируем индекс out → a_index
+            a_index[:] = out_index
+
+            for k in range(a_shape[reduce_dim]):
+                a_index[reduce_dim] = k
+                pos_a = index_to_position(a_index, a_strides)
+                acc = fn(acc, float(a_storage[pos_a]))
+
+            out[pos_out] = acc
 
     return _reduce
 

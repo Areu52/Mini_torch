@@ -123,38 +123,61 @@ class CudaOps(TensorOps):
 
 # Implement
 
-
+# Теперь реализуем многопоточный map чeрeз cuda
 def tensor_map(
     fn: Callable[[float], float]
 ) -> Callable[[Storage, Shape, Strides, Storage, Shape, Strides], None]:
+       
     """
     CUDA higher-order tensor map function. ::
 
-      fn_map = tensor_map(fn)
-      fn_map(out, ... )
+    fn_map = tensor_map(fn)
+    fn_map(out, ... )
 
-    Args:
-        fn: function mappings floats-to-floats to apply.
+    Аргументы:
+        fn: функция, которая применяется к каждому float-значению
 
-    Returns:
-        Tensor map function.
+    Возвращает:
+        Tensor map function
     """
 
     def _map(
-        out: Storage,
-        out_shape: Shape,
-        out_strides: Strides,
-        out_size: int,
-        in_storage: Storage,
-        in_shape: Shape,
-        in_strides: Strides,
+        out: Storage,          # storage выходного тензора
+        out_shape: Shape,      # shape выходного тензора
+        out_strides: Strides,  # strides выходного тензора
+        out_size: int,         # количество элементов в выходном тензоре
+        in_storage: Storage,   # storage входного тензора
+        in_shape: Shape,       # shape входного тензора
+        in_strides: Strides,   # strides входного тензора
     ) -> None:
 
+        # Локальный массив для многомерного индекса out
         out_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        # Локальный массив для многомерного индекса input
         in_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        # Глобальный номер CUDA-потока
+        # Каждый поток отвечает за один элемент out
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-        # TODO: Implement for Task 3.3.
-        raise NotImplementedError('Need to implement for Task 3.3')
+
+        # Проверяем, что поток не вышел за размер out
+        if i < out_size:
+
+            # Переводим номер i в многомерный индекс out
+            to_index(i, out_shape, out_index)
+
+            # Переводим индекс out в индекс input с учётом broadcasting
+            broadcast_index(out_index, out_shape, in_shape, in_index)
+
+            # Находим позицию элемента out в storage
+            out_pos = index_to_position(out_index, out_strides)
+
+            # Находим позицию элемента input в storage
+            in_pos = index_to_position(in_index, in_strides)
+
+            # Применяем fn к input и записываем результат в out
+            out[out_pos] = fn(in_storage[in_pos])
 
     return cuda.jit()(_map)  # type: ignore
 
@@ -170,33 +193,66 @@ def tensor_zip(
       fn_zip = tensor_zip(fn)
       fn_zip(out, ...)
 
-    Args:
-        fn: function mappings two floats to float to apply.
+    Аргументы:
+        fn: функция, которая принимает два float-значения
+            и возвращает одно float-значение
 
-    Returns:
-        Tensor zip function.
+    Возвращает:
+        Tensor zip function
     """
 
     def _zip(
-        out: Storage,
-        out_shape: Shape,
-        out_strides: Strides,
-        out_size: int,
-        a_storage: Storage,
-        a_shape: Shape,
-        a_strides: Strides,
-        b_storage: Storage,
-        b_shape: Shape,
-        b_strides: Strides,
+        out: Storage,          # storage выходного тензора
+        out_shape: Shape,      # shape выходного тензора
+        out_strides: Strides,  # strides выходного тензора
+        out_size: int,         # количество элементов в выходном тензоре
+
+        a_storage: Storage,    # storage первого входного тензора
+        a_shape: Shape,        # shape первого входного тензора
+        a_strides: Strides,    # strides первого входного тензора
+
+        b_storage: Storage,    # storage второго входного тензора
+        b_shape: Shape,        # shape второго входного тензора
+        b_strides: Strides,    # strides второго входного тензора
     ) -> None:
 
+        # Локальный массив для многомерного индекса out
         out_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        # Локальный массив для многомерного индекса a
         a_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        # Локальный массив для многомерного индекса b
         b_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        # Глобальный номер CUDA-потока
+        # Каждый поток отвечает за один элемент out
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
 
-        # TODO: Implement for Task 3.3.
-        raise NotImplementedError('Need to implement for Task 3.3')
+        # Проверяем, что поток не вышел за размер out
+        if i < out_size:
+
+            # Переводим номер i в многомерный индекс out
+            to_index(i, out_shape, out_index)
+
+            # Переводим индекс out в индекс a с учётом broadcasting
+            broadcast_index(out_index, out_shape, a_shape, a_index)
+
+            # Переводим индекс out в индекс b с учётом broadcasting
+            broadcast_index(out_index, out_shape, b_shape, b_index)
+
+            # Находим позицию элемента out в storage
+            out_pos = index_to_position(out_index, out_strides)
+
+            # Находим позицию элемента a в storage
+            a_pos = index_to_position(a_index, a_strides)
+
+            # Находим позицию элемента b в storage
+            b_pos = index_to_position(b_index, b_strides)
+
+            # Применяем fn к элементам a и b
+            # записываем результат в out
+            out[out_pos] = fn(a_storage[a_pos], b_storage[b_pos])
 
     return cuda.jit()(_zip)  # type: ignore
 
@@ -205,31 +261,79 @@ def _sum_practice(out: Storage, a: Storage, size: int) -> None:
     """
     This is a practice sum kernel to prepare for reduce.
 
-    Given an array of length $n$ and out of size $n // \text{blockDIM}$
-    it should sum up each blockDim values into an out cell.
+    Дан массив длины n и out размера n // blockDim.
+    Нужно просуммировать каждые blockDim элементов
+    и записать сумму в одну ячейку out.
 
-    $[a_1, a_2, ..., a_{100}]$
+    Пример:
 
-    |
+        [a1, a2, ..., a100]
 
-    $[a_1 +...+ a_{31}, a_{32} + ... + a_{64}, ... ,]$
+    превращается в:
 
-    Note: Each block must do the sum using shared memory!
+        [a1 + ... + a31, a32 + ... + a64, ...]
 
-    Args:
-        out (Storage): storage for `out` tensor.
-        a (Storage): storage for `a` tensor.
-        size (int):  length of a.
+    Важно:
+        каждый block должен делать сумму через shared memory
 
+    Аргументы:
+        out (Storage):
+            storage выходного тензора
+
+        a (Storage):
+            storage входного тензора
+
+        size (int):
+            длина массива a
     """
+
     BLOCK_DIM = 32
 
+    # Shared memory внутри одного CUDA block
+    # Все потоки этого block могут читать и писать сюда
     cache = cuda.shared.array(BLOCK_DIM, numba.float64)
+
+    # Глобальный индекс элемента a
+    # Каждый CUDA-поток отвечает за один элемент
     i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+
+    # Локальный индекс потока внутри block
+    # От 0 до BLOCK_DIM - 1
     pos = cuda.threadIdx.x
 
-    # TODO: Implement for Task 3.3.
-    raise NotImplementedError('Need to implement for Task 3.3')
+    # Если глобальный индекс не вышел за границы массива,
+    # кладём значение a[i] в shared memory
+    if i < size:
+        cache[pos] = a[i]
+
+    # Если поток вышел за границы массива,
+    # кладём 0 чтобы он не влиял на сумму
+    else:
+        cache[pos] = 0.0
+
+    # Ждём пока все потоки block запишут данные в cache
+    cuda.syncthreads()
+
+    # Начинаем параллельное суммирование внутри cache
+    # Сначала складываем пары на расстоянии 16,
+    # потом 8, потом 4, потом 2, потом 1
+    step = BLOCK_DIM // 2
+
+    while step > 0:
+        # Только первые step потоков делают сложение
+        if pos < step:
+            cache[pos] += cache[pos + step]
+
+        # Ждём пока все сложения этого шага закончатся
+        cuda.syncthreads()
+
+        # Уменьшаем расстояние в 2 раза
+        step = step // 2
+
+    # После reduce внутри block итоговая сумма лежит в cache[0]
+    # Только первый поток block записывает её в out
+    if pos == 0:
+        out[cuda.blockIdx.x] = cache[0]
 
 
 jit_sum_practice = cuda.jit()(_sum_practice)
@@ -253,70 +357,175 @@ def tensor_reduce(
     """
     CUDA higher-order tensor reduce function.
 
-    Args:
-        fn: reduction function maps two floats to float.
+    Аргументы:
+        fn: функция reduce, которая принимает два float-значения
+            и возвращает одно float-значение
 
-    Returns:
-        Tensor reduce function.
-
+    Возвращает:
+        Tensor reduce function
     """
 
     def _reduce(
-        out: Storage,
-        out_shape: Shape,
-        out_strides: Strides,
-        out_size: int,
-        a_storage: Storage,
-        a_shape: Shape,
-        a_strides: Strides,
-        reduce_dim: int,
-        reduce_value: float,
+        out: Storage,              # storage выходного тензора
+        out_shape: Shape,          # shape выходного тензора
+        out_strides: Strides,      # strides выходного тензора
+        out_size: int,             # количество элементов в out
+
+        a_storage: Storage,        # storage входного тензора
+        a_shape: Shape,            # shape входного тензора
+        a_strides: Strides,        # strides входного тензора
+
+        reduce_dim: int,           # ось по которой делаем reduce
+        reduce_value: float,       # стартовое значение reduce, например 0 для sum
     ) -> None:
         BLOCK_DIM = 1024
+
+        # Shared memory для reduce внутри одного CUDA block
         cache = cuda.shared.array(BLOCK_DIM, numba.float64)
+
+        # Многомерный индекс выходного элемента
         out_index = cuda.local.array(MAX_DIMS, numba.int32)
+
+        # Каждый block считает один элемент out
         out_pos = cuda.blockIdx.x
+
+        # Номер потока внутри block
         pos = cuda.threadIdx.x
 
-        # TODO: Implement for Task 3.3.
-        raise NotImplementedError('Need to implement for Task 3.3')
+        # Проверяем что block не вышел за размер out
+        if out_pos < out_size:
+
+            # Переводим номер out_pos в многомерный индекс out
+            to_index(out_pos, out_shape, out_index)
+
+            # Размер оси которую сворачиваем
+            reduce_size = a_shape[reduce_dim]
+
+            # Stride по оси которую сворачиваем
+            reduce_stride = a_strides[reduce_dim]
+
+            # Начальная позиция во входном storage
+            #
+            # out_index совпадает с индексом a,
+            # только по reduce_dim в out стоит номер чанка reduce
+            base_pos = index_to_position(out_index, a_strides)
+
+            # Каждый block считает один chunk длиной BLOCK_DIM
+            #
+            # Например:
+            # block 0 считает элементы 0..1023
+            # block 1 считает элементы 1024..2047
+            start = out_index[reduce_dim] * BLOCK_DIM
+
+            # Конкретный элемент reduce-оси для этого потока
+            offset = start + pos
+
+            # Если offset не вышел за reduce_size,
+            # кладём значение из a в shared memory
+            if offset < reduce_size:
+                cache[pos] = a_storage[base_pos + offset * reduce_stride]
+
+            # Если вышли за границу,
+            # кладём стартовое значение reduce
+            else:
+                cache[pos] = reduce_value
+
+            # Ждём пока все потоки запишут значения в cache
+            cuda.syncthreads()
+
+            # Параллельно сворачиваем cache
+            step = BLOCK_DIM // 2
+
+            while step > 0:
+                if pos < step:
+                    cache[pos] = fn(cache[pos], cache[pos + step])
+
+                cuda.syncthreads()
+                step = step // 2
+
+            # Первый поток записывает итог reduce в out
+            if pos == 0:
+                out[out_pos] = cache[0]
 
     return cuda.jit()(_reduce)  # type: ignore
 
-
+# shared_memory нужна здeсь так как один и тот жe элeмeнт матрицы нужeн многим потокам. Бeз нee один блок потоков читал бы каждый раз a[i,j], а с нeй будeт каждый блок быстро читать этот элeмeнт и с ним работать
 def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
     """
-    This is a practice square MM kernel to prepare for matmul.
+    Тренировочное CUDA-ядро для умножения квадратных матриц,
+    чтобы подготовиться к matmul.
 
-    Given a storage `out` and two storage `a` and `b`. Where we know
-    both are shape [size, size] with strides [size, 1].
+    Даны storage `out`, `a`, `b`.
 
-    Size is always < 32.
+    Мы знаем, что `a` и `b` имеют shape:
 
-    Requirements:
+        [size, size]
 
-    * All data must be first moved to shared memory.
-    * Only read each cell in `a` and `b` once.
-    * Only write to global memory once per kernel.
+    и strides:
 
-    Compute
+        [size, 1]
 
-    ```
-     for i:
-         for j:
-              for k:
-                  out[i, j] += a[i, k] * b[k, j]
-    ```
+    Размер size всегда меньше 32.
 
-    Args:
-        out (Storage): storage for `out` tensor.
-        a (Storage): storage for `a` tensor.
-        b (Storage): storage for `b` tensor.
-        size (int): size of the square
+    Требования:
+
+    * Все данные сначала нужно перенести в shared memory(shared memory — это быстрая общая память внутри одного CUDA block.)
+    * Каждую ячейку `a` и `b` нужно прочитать только один раз
+    * В global memory нужно записать только один раз на kernel
+
+    Считаем:
+
+        for i:
+            for j:
+                for k:
+                    out[i, j] += a[i, k] * b[k, j]
+
+    Аргументы:
+        out (Storage): storage для тензора `out`
+        a (Storage): storage для тензора `a`
+        b (Storage): storage для тензора `b`
+        size (int): размер квадратной матрицы
     """
     BLOCK_DIM = 32
-    # TODO: Implement for Task 3.3.
-    raise NotImplementedError('Need to implement for Task 3.3')
+
+    # Shared memory для матрицы a
+    a_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+
+    # Shared memory для матрицы b
+    b_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+
+    # Локальная строка внутри block
+    i = cuda.threadIdx.x
+
+    # Локальный столбец внутри block
+    j = cuda.threadIdx.y
+
+    # Если индекс внутри реального размера матрицы,
+    # переносим элементы из global memory в shared memory
+    if i < size and j < size:
+        a_shared[i, j] = a[i * size + j]
+        b_shared[i, j] = b[i * size + j]
+
+    # Если поток вне реального размера,
+    # кладём 0 чтобы он не влиял на вычисления
+    else:
+        a_shared[i, j] = 0.0
+        b_shared[i, j] = 0.0
+
+    # Ждём пока все потоки загрузят данные в shared memory
+    cuda.syncthreads()
+
+    # Локальный аккумулятор для out[i, j]
+    acc = 0.0
+
+    # Считаем скалярное произведение:
+    # строка i из a умножается на столбец j из b
+    if i < size and j < size:
+        for k in range(size):
+            acc += a_shared[i, k] * b_shared[k, j]
+
+        # Записываем результат один раз в global memory
+        out[i * size + j] = acc
 
 
 jit_mm_practice = cuda.jit()(_mm_practice)
@@ -346,47 +555,148 @@ def _tensor_matrix_multiply(
     b_shape: Shape,
     b_strides: Strides,
 ) -> None:
+    
     """
-    CUDA tensor matrix multiply function.
+    CUDA-функция умножения тензоров как матриц.
 
-    Requirements:
+    Требования:
 
-    * All data must be first moved to shared memory.
-    * Only read each cell in `a` and `b` once.
-    * Only write to global memory once per kernel.
+    * Все данные сначала должны быть перенесены в shared memory.
+    * Каждая ячейка `a` и `b` должна быть прочитана только один раз.
+    * В global memory нужно записывать только один раз на kernel.
 
-    Should work for any tensor shapes that broadcast as long as ::
+    Должна работать для любых форм тензоров,
+    которые можно broadcast-ить, если выполняется условие:
 
     ```python
     assert a_shape[-1] == b_shape[-2]
     ```
-    Returns:
-        None : Fills in `out`
+
+    Возвращает:
+        None: заполняет `out`.
     """
+    # Если batch у a больше 1, используем обычный stride по batch.
+    # Если batch == 1, значит a broadcastится по batch,
+    # поэтому stride по batch должен быть 0.
     a_batch_stride = a_strides[0] if a_shape[0] > 1 else 0
+
+    # То же самое для b.
     b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
-    # Batch dimension - fixed
+
+    # Номер batch фиксирован для этого CUDA block.
     batch = cuda.blockIdx.z
 
     BLOCK_DIM = 32
     a_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
     b_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
 
-    # The final position c[i, j]
+    # Финальная позиция элемента результата out[i, j].
     i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     j = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
 
-    # The local position in the block.
+     # Локальная позиция потока внутри CUDA block.
     pi = cuda.threadIdx.x
     pj = cuda.threadIdx.y
 
-    # Code Plan:
-    # 1) Move across shared dimension by block dim.
-    #    a) Copy into shared memory for a matrix.
-    #    b) Copy into shared memory for b matrix
-    #    c) Compute the dot produce for position c[i, j]
-    # TODO: Implement for Task 3.4.
-    raise NotImplementedError('Need to implement for Task 3.4')
+
+    # План кода:
+    #
+    # 1) Идём по общей внутренней размерности кусками размера BLOCK_DIM.
+    #    a) Копируем кусок матрицы a в shared memory.
+    #
+    #    b) Копируем кусок матрицы b в shared memory.
+    #
+    #    c) Считаем скалярное произведение для позиции c[i, j].
+
+    # Количество строк в результате
+    out_rows = out_shape[1]
+
+    # Количество столбцов в результате
+    out_cols = out_shape[2]
+
+    # Внутренняя размерность:
+    # a.shape = (batch, rows, inner)
+    # b.shape = (batch, inner, cols)
+    inner = a_shape[2]
+
+    # Локальная сумма для одного элемента out[batch, i, j]
+    acc = 0.0
+
+    # Идём по внутренней размерности кусками по BLOCK_DIM
+    #
+    # Например inner = 100
+    # BLOCK_DIM = 32
+    #
+    # tile_start будет:
+    # 0, 32, 64, 96
+    for tile_start in range(0, inner, BLOCK_DIM):
+
+        # Индекс k для загрузки элемента из a
+        #
+        # a[batch, i, tile_start + pj]
+        a_k = tile_start + pj
+
+        # Индекс k для загрузки элемента из b
+        #
+        # b[batch, tile_start + pi, j]
+        b_k = tile_start + pi
+
+        # Загружаем кусок матрицы a в shared memory.
+        #
+        # Каждый поток загружает один элемент:
+        # a_shared[pi, pj] = a[batch, i, a_k]
+        #
+        # Если вышли за границы, кладём 0
+        if i < out_rows and a_k < inner:
+            a_shared[pi, pj] = a_storage[
+                batch * a_batch_stride
+                + i * a_strides[1]
+                + a_k * a_strides[2]
+            ]
+        else:
+            a_shared[pi, pj] = 0.0
+
+        # Загружаем кусок матрицы b в shared memory.
+        #
+        # Каждый поток загружает один элемент:
+        # b_shared[pi, pj] = b[batch, b_k, j]
+        #
+        # Если вышли за границы, кладём 0
+        if b_k < inner and j < out_cols:
+            b_shared[pi, pj] = b_storage[
+                batch * b_batch_stride
+                + b_k * b_strides[1]
+                + j * b_strides[2]
+            ]
+        else:
+            b_shared[pi, pj] = 0.0
+
+        # Ждём, пока все потоки загрузят данные в shared memory
+        cuda.syncthreads()
+
+        # Теперь считаем часть скалярного произведения
+        #
+        # out[batch, i, j] +=
+        # a[batch, i, k] * b[batch, k, j]
+        #
+        # Но читаем уже из shared memory
+        for k in range(BLOCK_DIM):
+            acc += a_shared[pi, k] * b_shared[k, pj]
+
+        # Ждём, пока все потоки закончат использовать shared memory,
+        # прежде чем перезаписать её на следующем tile
+        cuda.syncthreads()
+
+    # Если поток соответствует реальному элементу out,
+    # записываем итог в global memory
+    if i < out_rows and j < out_cols:
+        out_pos = (
+            batch * out_strides[0]
+            + i * out_strides[1]
+            + j * out_strides[2]
+        )
+
+        out[out_pos] = acc
 
 
 tensor_matrix_multiply = cuda.jit(_tensor_matrix_multiply)

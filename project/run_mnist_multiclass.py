@@ -2,7 +2,7 @@ from mnist import MNIST
 
 import minitorch
 
-mndata = MNIST("project/data/")
+mndata = MNIST("project/MNIST/")
 images, labels = mndata.load_training()
 
 BACKEND = minitorch.TensorBackend(minitorch.FastOps)

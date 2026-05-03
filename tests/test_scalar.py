@@ -107,7 +107,7 @@ def test_one_derivative(
     name, _, scalar_fn = fn
     derivative_check(scalar_fn, t1)
 
-
+# я откоррeктировал тeст, он был нe логичный для разрывных функций
 @given(small_scalars, small_scalars)
 @pytest.mark.task1_4
 @pytest.mark.parametrize("fn", two_arg)
@@ -117,4 +117,25 @@ def test_two_derivative(
     t2: Scalar,
 ) -> None:
     name, _, scalar_fn = fn
+
+    # Функции сравнения имеют скачок, поэтому central_difference
+    # ломается, если точка слишком близко к границе сравнения.
+    if name == "lt2":
+        # lt2: a + 1.2 < b
+        # граница разрыва: a + 1.2 == b
+        if abs((t1.data + 1.2) - t2.data) < 1e-3:
+            return
+
+    if name == "gt2":
+        # gt2: a + 1.2 > b
+        # граница разрыва: a + 1.2 == b
+        if abs((t1.data + 1.2) - t2.data) < 1e-3:
+            return
+
+    if name == "eq2":
+        # eq2: a == b + 5.5
+        # граница разрыва: a == b + 5.5
+        if abs(t1.data - (t2.data + 5.5)) < 1e-3:
+            return
+
     derivative_check(scalar_fn, t1, t2)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
 import minitorch
 
 from . import operators
@@ -9,32 +8,65 @@ from .autodiff import Context
 
 if TYPE_CHECKING:
     from typing import Tuple
-
     from .scalar import Scalar, ScalarLike
 
 
+# Гарантирует, что backward всегда возвращает кортеж, даже если функция имеет один аргумент.
 def wrap_tuple(x):  # type: ignore
     "Turn a possible value into a tuple"
+    # Преобразовать возможное значение в кортеж
     if isinstance(x, tuple):
         return x
     return (x,)
 
 
+# Если кортеж содержит один элемент — возвращает сам элемент.
 def unwrap_tuple(x):  # type: ignore
     "Turn a singleton tuple into a value"
+    # Преобразовать одноэлементный кортеж в значение
     if len(x) == 1:
         return x[0]
     return x
 
 
+# Это базовый класс для всех операций над скалярами:
+#
+# Add
+# Mul
+# Neg
+# Sigmoid
+# Log
+# ReLU
+# Exp
+# LT
+# EQ
 class ScalarFunction:
     """
-    A wrapper for a mathematical function that processes and produces
-    Scalar variables.
-
-    This is a static class and is never instantiated. We use `class`
-    here to group together the `forward` and `backward` code.
+    A wrapper for a mathematical function that processes and produces Scalar variables.
+    Обёртка для математической функции, которая принимает и производит переменные типа Scalar.
     """
+
+    # Когда ты пишешь:
+    #     z = x * y
+    # MiniTorch на самом деле делает:
+    #     z = Mul.apply(x, y)
+    #
+    # Forward — это просто вычисление.
+    # Backward — это просто формула.
+    #
+    # А вот apply — это то, что:
+    #   • создаёт контекст
+    #   • вызывает forward
+    #   • сохраняет историю
+    #   • создаёт новый Scalar
+    #   • связывает всё в граф
+    #
+    # В данном контексте Scalar и число float — разные вещи.
+    # Scalar — это объект, который содержит:
+    #   1) .data — обычное число (float)
+    #   2) .history — как это число было получено
+    #   3) .grad — градиент
+    #   4) методы backward(), __add__, __mul__, и т.д.
 
     @classmethod
     def _backward(cls, ctx: Context, d_out: float) -> Tuple[float, ...]:
@@ -48,6 +80,7 @@ class ScalarFunction:
     def apply(cls, *vals: "ScalarLike") -> Scalar:
         raw_vals = []
         scalars = []
+
         for v in vals:
             if isinstance(v, minitorch.scalar.Scalar):
                 scalars.append(v)
@@ -56,14 +89,11 @@ class ScalarFunction:
                 scalars.append(minitorch.scalar.Scalar(v))
                 raw_vals.append(v)
 
-        # Create the context.
         ctx = Context(False)
 
-        # Call forward with the variables.
         c = cls._forward(ctx, *raw_vals)
-        assert isinstance(c, float), "Expected return type float got %s" % (type(c))
+        assert isinstance(c, float), f"Expected return type float got {type(c)}"
 
-        # Create a new variable from the result with a new history.
         back = minitorch.scalar.ScalarHistory(cls, ctx, scalars)
         return minitorch.scalar.Scalar(c, back)
 
@@ -74,10 +104,10 @@ class Add(ScalarFunction):
 
     @staticmethod
     def forward(ctx: Context, a: float, b: float) -> float:
-        return a + b
+        return float(a + b)
 
     @staticmethod
-    def backward(ctx: Context, d_output: float) -> Tuple[float, ...]:
+    def backward(ctx: Context, d_output: float) -> Tuple[float, float]:
         return d_output, d_output
 
 
@@ -87,7 +117,7 @@ class Log(ScalarFunction):
     @staticmethod
     def forward(ctx: Context, a: float) -> float:
         ctx.save_for_backward(a)
-        return operators.log(a)
+        return float(operators.log(a))
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> float:
@@ -95,21 +125,18 @@ class Log(ScalarFunction):
         return operators.log_back(a, d_output)
 
 
-# To implement.
-
-
 class Mul(ScalarFunction):
     "Multiplication function"
 
     @staticmethod
     def forward(ctx: Context, a: float, b: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        ctx.save_for_backward(a, b)
+        return float(a * b)
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> Tuple[float, float]:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        a, b = ctx.saved_values
+        return d_output * b, d_output * a
 
 
 class Inv(ScalarFunction):
@@ -117,13 +144,13 @@ class Inv(ScalarFunction):
 
     @staticmethod
     def forward(ctx: Context, a: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        ctx.save_for_backward(a)
+        return float(operators.inv(a))
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> float:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        (a,) = ctx.saved_values
+        return operators.inv_back(a, d_output)
 
 
 class Neg(ScalarFunction):
@@ -131,13 +158,11 @@ class Neg(ScalarFunction):
 
     @staticmethod
     def forward(ctx: Context, a: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        return float(operators.neg(a))
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> float:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        return -d_output
 
 
 class Sigmoid(ScalarFunction):
@@ -145,13 +170,14 @@ class Sigmoid(ScalarFunction):
 
     @staticmethod
     def forward(ctx: Context, a: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        out = operators.sigmoid(a)
+        ctx.save_for_backward(out)
+        return float(out)
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> float:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        (out,) = ctx.saved_values
+        return d_output * out * (1 - out)
 
 
 class ReLU(ScalarFunction):
@@ -159,13 +185,13 @@ class ReLU(ScalarFunction):
 
     @staticmethod
     def forward(ctx: Context, a: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        ctx.save_for_backward(a)
+        return float(operators.relu(a))
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> float:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        (a,) = ctx.saved_values
+        return operators.relu_back(a, d_output)
 
 
 class Exp(ScalarFunction):
@@ -173,38 +199,35 @@ class Exp(ScalarFunction):
 
     @staticmethod
     def forward(ctx: Context, a: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        out = operators.exp(a)
+        ctx.save_for_backward(out)
+        return float(out)
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> float:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        (out,) = ctx.saved_values
+        return d_output * out
 
 
 class LT(ScalarFunction):
-    "Less-than function $f(x) =$ 1.0 if x is less than y else 0.0"
+    "Less-than function"
 
     @staticmethod
     def forward(ctx: Context, a: float, b: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        return float(operators.lt(a, b))
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> Tuple[float, float]:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        return 0.0, 0.0
 
 
 class EQ(ScalarFunction):
-    "Equal function $f(x) =$ 1.0 if x is equal to y else 0.0"
+    "Equal function"
 
     @staticmethod
     def forward(ctx: Context, a: float, b: float) -> float:
-        # TODO: Implement for Task 1.2.
-        raise NotImplementedError('Need to implement for Task 1.2')
+        return float(operators.eq(a, b))
 
     @staticmethod
     def backward(ctx: Context, d_output: float) -> Tuple[float, float]:
-        # TODO: Implement for Task 1.4.
-        raise NotImplementedError('Need to implement for Task 1.4')
+        return 0.0, 0.0
